@@ -74,7 +74,8 @@ class Trainer:
     def train_epoch(self, epoch):
         self.model.train()
         total_loss = 0
-        pbar = tqdm(self.train_loader, desc=f'Epoch {epoch+1}/{self.cfg["epochs"]}')
+        pbar = tqdm(self.train_loader, desc=f'训练轮次 {epoch+1}/{self.cfg["epochs"]}', 
+                    ncols=100, position=0, leave=True)
         
         for batch_idx, (images, targets) in enumerate(pbar):
             images = images.to(self.device)
@@ -89,14 +90,20 @@ class Trainer:
             loss.backward()
             self.optimizer.step()
             
-            # 更新进度条
+            # 更新进度条，显示更多信息
             total_loss += loss.item()
-            pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+            current_lr = self.optimizer.param_groups[0]['lr']
+            pbar.set_postfix({
+                '损失': f'{loss.item():.4f}',
+                '平均损失': f'{total_loss/(batch_idx+1):.4f}',
+                '学习率': f'{current_lr:.6f}'
+            })
             
             # 记录到TensorBoard
             step = epoch * len(self.train_loader) + batch_idx
             self.writer.add_scalar('train/loss', loss.item(), step)
-            
+            self.writer.add_scalar('train/lr', current_lr, step)
+        
         return total_loss / len(self.train_loader)
     
     def validate(self, epoch):
@@ -104,15 +111,25 @@ class Trainer:
         all_predictions = []
         all_targets = []
         
+        # 添加验证进度条
+        val_pbar = tqdm(self.val_loader, desc=f'验证轮次 {epoch+1}', 
+                        ncols=100, position=0, leave=True)
+        
         with torch.no_grad():
-            for images, targets in tqdm(self.val_loader, desc='Validating'):
+            for images, targets in val_pbar:
                 images = images.to(self.device)
                 predictions = self.model(images)
                 all_predictions.extend(predictions.cpu().numpy())
                 all_targets.extend(targets.cpu().numpy())
+                
+                # 实时显示验证进度
+                val_pbar.set_postfix({
+                    '状态': '收集预测结果'
+                })
         
-        # 计算mAP
+        # 计算并显示mAP
         map_score = calculate_map(all_predictions, all_targets)
+        logging.info(f'验证mAP: {map_score:.4f}')
         self.writer.add_scalar('val/mAP', map_score, epoch)
         
         return map_score

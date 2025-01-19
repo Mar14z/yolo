@@ -8,14 +8,13 @@
 #     └── coco8  ← downloads here (1 MB)
 
 # Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
-path: D:/Code/python/YOLOv11/datasets/yolo_data_cleaned
+path: yolo_data_cleaned
 train: train/images
 val: val/images
 test:
 
 # Classes
 names:
-  0: none
-  1: haishen
+  0: sea urchin
 
 
