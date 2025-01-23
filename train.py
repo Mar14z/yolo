@@ -208,6 +208,7 @@ if __name__ == "__main__":
     config = {
         'train_data_dir': 'datasets/yolo_data_cleaned/train',
         'val_data_dir': 'datasets/yolo_data_cleaned/val',
+        'data_yaml': 'ultralytics/cfg/datasets/demo1.yaml',
         'log_dir': 'runs/train',
         'log_file': 'training.log',
         'checkpoint_dir': 'checkpoints',
