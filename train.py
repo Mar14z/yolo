@@ -1,229 +1,88 @@
+# import torch
+# from ultralytics.models import YOLO
+
+# # 初始化模型
+# model = YOLO('ultralytics/cfg/models/11/yolo11.yaml')
+
+# # 训练模型
+# if __name__ == "__main__":
+#     model.train(
+#         data='ultralytics/cfg/datasets/demo1.yaml',  # 数据集配置文件
+#         epochs=100,                                  # 训练轮次
+#         imgsz=640,                                  # 图像大小
+#         batch=16,                                   # 批次大小
+#         device=0 if torch.cuda.is_available() else 'cpu',  # 使用的设备
+#         plots=True,                                # 保存训练图表
+#         save=True,                                 # 保存模型
+#         save_period=10,                            # 每10轮保存一次
+#         verbose=True                               # 显示详细信息
+#     )
+
+# # 运行 TensorBoard:
+# # tensorboard --logdir runs/train/exp
+
 import torch
-import torch.optim as optim
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 from ultralytics.models import YOLO
-from tqdm import tqdm
-import numpy as np
-from pathlib import Path
-import logging
-from torch.utils.tensorboard import SummaryWriter
 
+# 初始化模型
+model = YOLO('ultralytics/cfg/models/11/yolo11.yaml')
 
-from utils.datasets import LoadDataset  # 数据加载器
-from utils.loss import YOLOLoss  # 损失函数
-from utils.metrics import calculate_map  # mAP计算函数
-
-class Trainer:
-    def __init__(self, cfg):
-        self.cfg = cfg
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.setup_logging()
-        self.writer = SummaryWriter(cfg['log_dir'])
-        
-        # 初始化模型
-        self.model = YOLO('ultralytics/cfg/models/11/yolo11.yaml')
-        self.model.train(
-            data='ultralytics/cfg/datasets/demo1.yaml',  # 使用 coco8 数据集配置
-            epochs=100,
-            imgsz=640,
-            batch=16,
-    
-        )
-        
-        # 数据加载
-        self.train_loader = self.get_dataloader(is_train=True)
-        self.val_loader = self.get_dataloader(is_train=False)
-        
-        # 优化器和损失函数
-        self.optimizer = optim.Adam(self.model.parameters(), lr=cfg['lr'])
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', patience=3, factor=0.1
-        )
-        self.criterion = YOLOLoss()
-        
-        # 训练状态记录
-        self.best_map = 0
-        self.train_losses = []
-        self.val_maps = []
-        
-    def setup_logging(self):
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(self.cfg['log_file']),
-                logging.StreamHandler()
-            ]
-        )
-        
-    def get_dataloader(self, is_train=True):
-        dataset = LoadDataset(
-            data_dir=self.cfg['train_data_dir'] if is_train else self.cfg['val_data_dir'],
-            img_size=self.cfg['img_size'],
-            is_train=is_train
-        )
-        return DataLoader(
-            dataset,
-            batch_size=self.cfg['batch_size'],
-            shuffle=is_train,
-            num_workers=self.cfg['num_workers'],
-            pin_memory=True
-        )
-        
-    def train_epoch(self, epoch):
-        self.model.train()
-        total_loss = 0
-        pbar = tqdm(self.train_loader, desc=f'训练轮次 {epoch+1}/{self.cfg["epochs"]}', 
-                    ncols=100, position=0, leave=True)
-        
-        for batch_idx, (images, targets) in enumerate(pbar):
-            images = images.to(self.device)
-            targets = targets.to(self.device)
-            
-            # 前向传播
-            predictions = self.model(images)
-            loss = self.criterion(predictions, targets)
-            
-            # 反向传播
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-            
-            # 更新进度条，显示更多信息
-            total_loss += loss.item()
-            current_lr = self.optimizer.param_groups[0]['lr']
-            pbar.set_postfix({
-                '损失': f'{loss.item():.4f}',
-                '平均损失': f'{total_loss/(batch_idx+1):.4f}',
-                '学习率': f'{current_lr:.6f}'
-            })
-            
-            # 记录到TensorBoard
-            step = epoch * len(self.train_loader) + batch_idx
-            self.writer.add_scalar('train/loss', loss.item(), step)
-            self.writer.add_scalar('train/lr', current_lr, step)
-        
-        return total_loss / len(self.train_loader)
-    
-    def validate(self, epoch):
-        self.model.eval()
-        all_predictions = []
-        all_targets = []
-        
-        # 添加验证进度条
-        val_pbar = tqdm(self.val_loader, desc=f'验证轮次 {epoch+1}', 
-                        ncols=100, position=0, leave=True)
-        
-        with torch.no_grad():
-            for images, targets in val_pbar:
-                images = images.to(self.device)
-                predictions = self.model(images)
-                all_predictions.extend(predictions.cpu().numpy())
-                all_targets.extend(targets.cpu().numpy())
-                
-                # 实时显示验证进度
-                val_pbar.set_postfix({
-                    '状态': '收集预测结果'
-                })
-        
-        # 计算并显示mAP
-        map_score = calculate_map(all_predictions, all_targets)
-        logging.info(f'验证mAP: {map_score:.4f}')
-        self.writer.add_scalar('val/mAP', map_score, epoch)
-        
-        return map_score
-    
-    def save_checkpoint(self, epoch, map_score):
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'map': map_score,
-        }
-        
-        # 保存最新检查点
-        torch.save(checkpoint, f'{self.cfg["checkpoint_dir"]}/last.pt')
-        
-        # 保存最佳模型
-        if map_score > self.best_map:
-            self.best_map = map_score
-            torch.save(checkpoint, f'{self.cfg["checkpoint_dir"]}/best.pt')
-            logging.info(f'New best mAP: {map_score:.4f}')
-    
-    def plot_training_progress(self):
-        plt.figure(figsize=(12, 4))
-        
-        # 损失曲线
-        plt.subplot(1, 2, 1)
-        plt.plot(self.train_losses, label='Training Loss')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title('Training Loss Over Time')
-        plt.legend()
-        
-        # mAP曲线
-        plt.subplot(1, 2, 2)
-        plt.plot(self.val_maps, label='Validation mAP')
-        plt.xlabel('Epoch')
-        plt.ylabel('mAP')
-        plt.title('Validation mAP Over Time')
-        plt.legend()
-        
-        plt.tight_layout()
-        plt.savefig(f'{self.cfg["log_dir"]}/training_progress.png')
-        plt.close()
-    
-    def train(self):
-        logging.info(f"Starting training on device: {self.device}")
-        
-        for epoch in range(self.cfg['epochs']):
-            # 训练一个epoch
-            train_loss = self.train_epoch(epoch)
-            self.train_losses.append(train_loss)
-            
-            # 验证
-            map_score = self.validate(epoch)
-            self.val_maps.append(map_score)
-            
-            # 更新学习率
-            self.scheduler.step(train_loss)
-            
-            # 保存检查点
-            self.save_checkpoint(epoch, map_score)
-            
-            # 更新进度图
-            self.plot_training_progress()
-            
-            # 记录日志
-            logging.info(
-                f"Epoch {epoch+1}/{self.cfg['epochs']}, "
-                f"Loss: {train_loss:.4f}, mAP: {map_score:.4f}"
-            )
-        
-        logging.info("Training completed!")
-        self.writer.close()
-
+# 训练模型
 if __name__ == "__main__":
-    config = {
-        'train_data_dir': 'datasets/yolo_data_cleaned/train',
-        'val_data_dir': 'datasets/yolo_data_cleaned/val',
-        'data_yaml': 'ultralytics/cfg/datasets/demo1.yaml',
-        'log_dir': 'runs/train',
-        'log_file': 'training.log',
-        'checkpoint_dir': 'checkpoints',
-        'num_classes': 1,  # 因为只保留了类别1
-        'img_size': 640,
-        'batch_size': 16,
-        'num_workers': 4,
-        'lr': 0.001,
-        'epochs': 100,
-    }
-    
-    # 创建必要的目录
-    for dir_path in [config['log_dir'], config['checkpoint_dir']]:
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
-    
-    # 开始训练
-    trainer = Trainer(config)
-    trainer.train()
+    model.train(
+        data='ultralytics/cfg/datasets/demo1.yaml',  # 数据集配置文件
+        epochs=300,                                  # 训练轮次
+        imgsz=640,                                  # 图像大小
+        batch=16,                                   # 批次大小
+        device=0 if torch.cuda.is_available() else 'cpu',  # 使用的设备
+
+        
+        # 优化器参数
+        lr0=0.01,                                   # 初始学习率
+        lrf=0.01,                                   # 最终学习率
+        momentum=0.937,                             # SGD动量
+        weight_decay=0.0005,                        # 权重衰减
+        warmup_epochs=3,                            # 预热轮次
+        warmup_momentum=0.8,                        # 预热动量
+        warmup_bias_lr=0.1,                         # 预热偏置学习率
+        
+        # 数据增强
+        hsv_h=0.015,                               # HSV-H增强
+        hsv_s=0.7,                                 # HSV-S增强
+        hsv_v=0.4,                                 # HSV-V增强
+        degrees=0.0,                               # 旋转角度
+        translate=0.1,                             # 平移
+        scale=0.5,                                 # 缩放
+        shear=0.0,                                 # 剪切
+        perspective=0.0,                           # 透视
+        flipud=0.0,                               # 上下翻转
+        fliplr=0.5,                               # 左右翻转
+        mosaic=1.0,                               # 马赛克增强
+        mixup=0.0,                                # mixup增强
+        copy_paste=0.0,                           # 复制粘贴增强
+        
+        # 训练策略
+        label_smoothing=0.0,                       # 标签平滑
+        multi_scale=True,                          # 多尺度训练
+        single_cls=False,                          # 单类别模式
+        rect=False,                                # 矩形训练
+        cos_lr=True,                              # 余弦学习率调度
+        
+        # 保存和日志
+        plots=True,                                # 保存训练图表
+        save=True,                                 # 保存模型
+        save_period=10,                            # 每50轮保存一次
+        patience=100,                             # 早停轮次
+        verbose=True,                             # 显示详细信息
+        
+        # 高级参数
+        overlap_mask=True,                        # 重叠mask
+        mask_ratio=4,                             # mask比例
+        dropout=0.0,                              # dropout比例
+        val=True,                                # 是否验证
+        workers=8                                 # 数据加载线程数
+    )
+
+# 运行 TensorBoard:
+# tensorboard --logdir /home/wfs/zmx/YOLOv11/runs/detect
+
