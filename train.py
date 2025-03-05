@@ -25,7 +25,7 @@ import torch
 from ultralytics.models import YOLO
 
 # 初始化模型
-model = YOLO('ultralytics/cfg/models/11/yolo11.yaml')
+model = YOLO('ultralytics/cfg/models/11/yolo11n-CBAM.yaml')
 
 # 训练模型
 if __name__ == "__main__":

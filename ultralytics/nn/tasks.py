@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-
+from .AddAttention import *
 from ultralytics.nn.modules import (
     AIFI,
     C1,
@@ -1030,6 +1030,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 legacy = False
                 if scale in "mlx":
                     args[3] = True
+                #注意力机制
+        elif m in {CBAM}:
+            c2 = ch[f]
+            args = [c2, *args]
         elif m is AIFI:
             args = [ch[f], *args]
         elif m in {HGStem, HGBlock}:
